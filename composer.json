@@ -1,0 +1,21 @@
+{
+    "name": "team-mate-pro/infra-bundle",
+    "description": "Infrastructure verification bundle for Symfony applications",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "version": "1.0.0",
+    "require": {
+        "php": ">=8.3",
+        "symfony/console": "^7.0",
+        "symfony/http-client": "^7.0",
+        "symfony/process": "^7.0"
+    },
+    "suggest": {
+        "ext-pdo": "Required for database connection verification"
+    },
+    "autoload": {
+        "psr-4": {
+            "TeamMatePro\\InfraBundle\\": "src/"
+        }
+    }
+}
