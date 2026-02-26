@@ -6,18 +6,30 @@ namespace TeamMatePro\InfraBundle\Command;
 
 use PDO;
 use PDOException;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Process\Process;
+use Symfony\Contracts\Service\Attribute\Required;
 use Throwable;
 
 abstract class AbstractInfraVerifyCommand extends Command
 {
     protected SymfonyStyle $io;
     private int $errorCount = 0;
+    private ?KernelInterface $kernel = null;
+
+    #[Required]
+    public function setKernel(KernelInterface $kernel): void
+    {
+        $this->kernel = $kernel;
+    }
 
     final protected function execute(InputInterface $input, OutputInterface $output): int
     {
@@ -204,5 +216,35 @@ abstract class AbstractInfraVerifyCommand extends Command
             $this->io->error(sprintf('[FAIL] %s - %s', $label, $e->getMessage()));
             $this->errorCount++;
         }
+    }
+
+    protected function verifyMailerConnection(string $recipientEmail): void
+    {
+        $label = 'SMTP connection (mailer:test)';
+
+        if ($this->kernel === null) {
+            $this->io->writeln(sprintf('<comment>[SKIP]</comment> %s - Kernel not available', $label));
+            return;
+        }
+
+        $application = new Application($this->kernel);
+        $application->setAutoExit(false);
+
+        $input = new ArrayInput([
+            'command' => 'mailer:test',
+            'to' => $recipientEmail,
+        ]);
+
+        $output = new BufferedOutput();
+        $exitCode = $application->run($input, $output);
+
+        if ($exitCode !== 0) {
+            $error = $output->fetch() ?: 'Connection failed';
+            $this->io->error(sprintf('[FAIL] %s - %s', $label, $error));
+            $this->errorCount++;
+            return;
+        }
+
+        $this->io->writeln(sprintf('<info>[OK]</info> %s', $label));
     }
 }
