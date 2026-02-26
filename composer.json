@@ -3,11 +3,13 @@
     "description": "Infrastructure verification bundle for Symfony applications",
     "type": "symfony-bundle",
     "license": "MIT",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "require": {
         "php": ">=8.3",
         "symfony/console": "^7.0",
+        "symfony/framework-bundle": "^7.0",
         "symfony/http-client": "^7.0",
+        "symfony/http-kernel": "^7.0",
         "symfony/process": "^7.0"
     },
     "suggest": {
