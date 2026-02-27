@@ -247,4 +247,105 @@ abstract class AbstractInfraVerifyCommand extends Command
 
         $this->io->writeln(sprintf('<info>[OK]</info> %s', $label));
     }
+
+    /**
+     * @param class-string $expectedClass
+     */
+    protected function verifyServiceIsInstanceOf(string $serviceId, string $expectedClass, ?string $description = null): void
+    {
+        $label = $description !== null ? sprintf('%s (%s)', $serviceId, $description) : $serviceId;
+
+        $service = $this->getServiceFromContainer($serviceId, $label);
+        if ($service === false) {
+            return;
+        }
+
+        if (!$service instanceof $expectedClass) {
+            $this->io->error(sprintf(
+                '[FAIL] %s - expected instance of %s, got %s',
+                $label,
+                $expectedClass,
+                get_debug_type($service),
+            ));
+            $this->errorCount++;
+            return;
+        }
+
+        $this->io->writeln(sprintf('<info>[OK]</info> %s', $label));
+    }
+
+    protected function verifyServiceHasValue(string $serviceId, mixed $expectedValue, ?string $description = null): void
+    {
+        $label = $description !== null ? sprintf('%s (%s)', $serviceId, $description) : $serviceId;
+
+        $service = $this->getServiceFromContainer($serviceId, $label);
+        if ($service === false) {
+            return;
+        }
+
+        if ($service !== $expectedValue) {
+            $this->io->error(sprintf(
+                '[FAIL] %s - expected %s, got %s',
+                $label,
+                $this->formatValue($expectedValue),
+                $this->formatValue($service),
+            ));
+            $this->errorCount++;
+            return;
+        }
+
+        $this->io->writeln(sprintf('<info>[OK]</info> %s', $label));
+    }
+
+    /**
+     * @return mixed The service instance, or false if retrieval failed (error already logged)
+     */
+    private function getServiceFromContainer(string $serviceId, string $label): mixed
+    {
+        if ($this->kernel === null) {
+            $this->io->writeln(sprintf('<comment>[SKIP]</comment> %s - Kernel not available', $label));
+            return false;
+        }
+
+        $container = $this->kernel->getContainer();
+
+        if (!$container->has($serviceId)) {
+            $this->io->error(sprintf('[FAIL] %s - service not found in container', $label));
+            $this->errorCount++;
+            return false;
+        }
+
+        try {
+            return $container->get($serviceId);
+        } catch (Throwable $e) {
+            $this->io->error(sprintf('[FAIL] %s - %s', $label, $e->getMessage()));
+            $this->errorCount++;
+            return false;
+        }
+    }
+
+    private function formatValue(mixed $value): string
+    {
+        if (is_object($value)) {
+            return sprintf('object(%s)', get_class($value));
+        }
+
+        if (is_array($value)) {
+            return 'array';
+        }
+
+        if (is_string($value)) {
+            return sprintf('"%s"', $value);
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if ($value === null) {
+            return 'null';
+        }
+
+        return (string) $value;
+    }
 }
