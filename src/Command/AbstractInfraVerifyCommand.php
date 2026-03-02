@@ -348,4 +348,109 @@ abstract class AbstractInfraVerifyCommand extends Command
 
         return (string) $value;
     }
+
+    /**
+     * Verifies JWT configuration for Lexik JWT Authentication Bundle.
+     *
+     * Checks:
+     * - JWT_SECRET_KEY, JWT_PUBLIC_KEY, JWT_PASSPHRASE environment variables
+     * - Key files exist and are readable
+     * - Key files have valid PEM format
+     * - OpenSSL can load the keys with provided passphrase
+     *
+     * @param string $projectDir The project directory to resolve %kernel.project_dir% placeholder
+     */
+    protected function verifyJwtLexikBundleKeys(string $projectDir): void
+    {
+        $this->section('JWT Configuration (Lexik Bundle)');
+
+        // Get key paths from environment
+        $secretKeyPath = $_ENV['JWT_SECRET_KEY'] ?? $_SERVER['JWT_SECRET_KEY'] ?? getenv('JWT_SECRET_KEY') ?: null;
+        $publicKeyPath = $_ENV['JWT_PUBLIC_KEY'] ?? $_SERVER['JWT_PUBLIC_KEY'] ?? getenv('JWT_PUBLIC_KEY') ?: null;
+        $passphrase = $_ENV['JWT_PASSPHRASE'] ?? $_SERVER['JWT_PASSPHRASE'] ?? getenv('JWT_PASSPHRASE') ?: null;
+
+        // Resolve Symfony parameter placeholder
+        if ($secretKeyPath) {
+            $secretKeyPath = str_replace('%kernel.project_dir%', $projectDir, $secretKeyPath);
+        }
+        if ($publicKeyPath) {
+            $publicKeyPath = str_replace('%kernel.project_dir%', $projectDir, $publicKeyPath);
+        }
+
+        // Verify private key file
+        if (!$secretKeyPath) {
+            $this->io->error('[FAIL] JWT_SECRET_KEY environment variable is not set');
+            $this->errorCount++;
+        } elseif (!file_exists($secretKeyPath)) {
+            $this->io->error(sprintf('[FAIL] JWT private key file does not exist: %s', $secretKeyPath));
+            $this->errorCount++;
+        } elseif (!is_readable($secretKeyPath)) {
+            $this->io->error(sprintf('[FAIL] JWT private key file is not readable: %s', $secretKeyPath));
+            $this->errorCount++;
+        } else {
+            $content = file_get_contents($secretKeyPath);
+            if ($content === false || !str_contains($content, '-----BEGIN')) {
+                $this->io->error(sprintf('[FAIL] JWT private key file has invalid format: %s', $secretKeyPath));
+                $this->errorCount++;
+            } else {
+                $this->io->writeln(sprintf('<info>[OK]</info> JWT private key file: %s', $secretKeyPath));
+            }
+        }
+
+        // Verify public key file
+        if (!$publicKeyPath) {
+            $this->io->error('[FAIL] JWT_PUBLIC_KEY environment variable is not set');
+            $this->errorCount++;
+        } elseif (!file_exists($publicKeyPath)) {
+            $this->io->error(sprintf('[FAIL] JWT public key file does not exist: %s', $publicKeyPath));
+            $this->errorCount++;
+        } elseif (!is_readable($publicKeyPath)) {
+            $this->io->error(sprintf('[FAIL] JWT public key file is not readable: %s', $publicKeyPath));
+            $this->errorCount++;
+        } else {
+            $content = file_get_contents($publicKeyPath);
+            if ($content === false || !str_contains($content, '-----BEGIN')) {
+                $this->io->error(sprintf('[FAIL] JWT public key file has invalid format: %s', $publicKeyPath));
+                $this->errorCount++;
+            } else {
+                $this->io->writeln(sprintf('<info>[OK]</info> JWT public key file: %s', $publicKeyPath));
+            }
+        }
+
+        // Verify passphrase is set
+        if (!$passphrase) {
+            $this->io->error('[FAIL] JWT_PASSPHRASE environment variable is not set');
+            $this->errorCount++;
+        } else {
+            $this->io->writeln('<info>[OK]</info> JWT_PASSPHRASE is configured');
+        }
+
+        // Verify OpenSSL can load the private key with passphrase
+        if ($secretKeyPath && file_exists($secretKeyPath) && is_readable($secretKeyPath) && $passphrase) {
+            $privateKeyContent = file_get_contents($secretKeyPath);
+            if ($privateKeyContent !== false) {
+                $privateKey = openssl_pkey_get_private($privateKeyContent, $passphrase);
+                if ($privateKey === false) {
+                    $this->io->error('[FAIL] Cannot load JWT private key with provided passphrase (OpenSSL error: ' . openssl_error_string() . ')');
+                    $this->errorCount++;
+                } else {
+                    $this->io->writeln('<info>[OK]</info> JWT private key is valid and passphrase is correct');
+                }
+            }
+        }
+
+        // Verify OpenSSL can load the public key
+        if ($publicKeyPath && file_exists($publicKeyPath) && is_readable($publicKeyPath)) {
+            $publicKeyContent = file_get_contents($publicKeyPath);
+            if ($publicKeyContent !== false) {
+                $publicKey = openssl_pkey_get_public($publicKeyContent);
+                if ($publicKey === false) {
+                    $this->io->error('[FAIL] Cannot load JWT public key (OpenSSL error: ' . openssl_error_string() . ')');
+                    $this->errorCount++;
+                } else {
+                    $this->io->writeln('<info>[OK]</info> JWT public key is valid');
+                }
+            }
+        }
+    }
 }
