@@ -58,6 +58,129 @@ abstract class AbstractInfraVerifyCommand extends Command
         $this->io->section($title);
     }
 
+    /**
+     * Verifies that the current git branch matches one of the expected branches.
+     *
+     * @param string|string[] $expectedBranches Single branch name or array of allowed branch names
+     * @param string|null $projectDir Project directory (defaults to current working directory)
+     */
+    protected function verifyBranch(string|array $expectedBranches, ?string $projectDir = null): void
+    {
+        $expectedBranches = is_array($expectedBranches) ? $expectedBranches : [$expectedBranches];
+        $label = count($expectedBranches) === 1
+            ? sprintf('Git branch (expected: %s)', $expectedBranches[0])
+            : sprintf('Git branch (expected: %s)', implode(' or ', $expectedBranches));
+
+        $currentBranch = $this->getCurrentGitBranch($projectDir);
+
+        if ($currentBranch === null) {
+            $this->io->error(sprintf('[FAIL] %s - could not determine current branch', $label));
+            $this->errorCount++;
+            return;
+        }
+
+        if (!in_array($currentBranch, $expectedBranches, true)) {
+            $this->io->error(sprintf(
+                '[FAIL] %s - current branch is "%s"',
+                $label,
+                $currentBranch
+            ));
+            $this->errorCount++;
+            return;
+        }
+
+        $this->io->writeln(sprintf('<info>[OK]</info> Git branch: %s', $currentBranch));
+    }
+
+    /**
+     * Gets the current git branch name.
+     *
+     * @param string|null $projectDir Project directory (defaults to current working directory)
+     * @return string|null Branch name or null if not a git repository or git not available
+     */
+    protected function getCurrentGitBranch(?string $projectDir = null): ?string
+    {
+        $command = ['git', 'rev-parse', '--abbrev-ref', 'HEAD'];
+
+        $process = new Process($command, $projectDir);
+        $process->run();
+
+        if (!$process->isSuccessful()) {
+            return null;
+        }
+
+        $branch = trim($process->getOutput());
+
+        // Handle detached HEAD state
+        if ($branch === 'HEAD') {
+            // Try to get branch from git describe
+            $describeProcess = new Process(['git', 'describe', '--all', '--exact-match', 'HEAD'], $projectDir);
+            $describeProcess->run();
+
+            if ($describeProcess->isSuccessful()) {
+                $describe = trim($describeProcess->getOutput());
+                // Remove 'heads/' or 'remotes/origin/' prefix
+                $branch = preg_replace('#^(heads/|remotes/[^/]+/)#', '', $describe) ?? $branch;
+            }
+        }
+
+        return $branch !== '' ? $branch : null;
+    }
+
+    /**
+     * Gets the latest git commit hash (short version).
+     *
+     * @param string|null $projectDir Project directory (defaults to current working directory)
+     * @return string|null Commit hash or null if not available
+     */
+    protected function getCurrentGitCommit(?string $projectDir = null): ?string
+    {
+        $process = new Process(['git', 'rev-parse', '--short', 'HEAD'], $projectDir);
+        $process->run();
+
+        if (!$process->isSuccessful()) {
+            return null;
+        }
+
+        $commit = trim($process->getOutput());
+
+        return $commit !== '' ? $commit : null;
+    }
+
+    /**
+     * Verifies git repository status - checks for uncommitted changes.
+     *
+     * @param string|null $projectDir Project directory (defaults to current working directory)
+     * @param bool $allowUncommitted If false, fails when there are uncommitted changes
+     */
+    protected function verifyGitStatus(?string $projectDir = null, bool $allowUncommitted = false): void
+    {
+        $process = new Process(['git', 'status', '--porcelain'], $projectDir);
+        $process->run();
+
+        if (!$process->isSuccessful()) {
+            $this->io->writeln('<comment>[SKIP]</comment> Git status - not a git repository or git not available');
+            return;
+        }
+
+        $output = trim($process->getOutput());
+        $hasChanges = $output !== '';
+
+        if ($hasChanges && !$allowUncommitted) {
+            $this->io->warning('[WARN] Git status - uncommitted changes detected');
+            return;
+        }
+
+        $commit = $this->getCurrentGitCommit($projectDir);
+        $commitInfo = $commit !== null ? sprintf(' (commit: %s)', $commit) : '';
+
+        $this->io->writeln(sprintf(
+            '<info>[OK]</info> Git status: %s%s',
+            $hasChanges ? 'has uncommitted changes' : 'clean',
+            $commitInfo
+        ));
+    }
+
     protected function verifyEnvVariable(string $name, ?string $description = null, ?string $expectedValue = null): void
     {
         $label = $description !== null ? sprintf('%s (%s)', $name, $description) : $name;
@@ -347,6 +470,292 @@ abstract class AbstractInfraVerifyCommand extends Command
         }
 
         return (string) $value;
+    }
+
+    /**
+     * Verifies file or directory permissions.
+     *
+     * Checks:
+     * - File/directory exists and is readable
+     * - Permissions are not 777 (world-writable)
+     * - For secret files: warns if world-readable (permissions ending with 4+)
+     *
+     * @param string $path Full path to file or directory
+     * @param string|null $displayName Display name for output (defaults to basename)
+     * @param bool $isSecretFile If true, warns about world-readable permissions
+     * @param string|null $expectedOwner Expected owner name (optional)
+     * @param string|null $expectedGroup Expected group name (optional)
+     * @param string|null $expectedPermissions Expected permissions in octal (e.g., '640', '755')
+     */
+    protected function verifyFilePermission(
+        string $path,
+        ?string $displayName = null,
+        bool $isSecretFile = false,
+        ?string $expectedOwner = null,
+        ?string $expectedGroup = null,
+        ?string $expectedPermissions = null,
+    ): void {
+        $displayName ??= basename($path);
+
+        if (!file_exists($path)) {
+            $this->io->writeln(sprintf('<comment>[SKIP]</comment> %s does not exist', $displayName));
+            return;
+        }
+
+        $owner = $this->getFileOwner($path);
+        $group = $this->getFileGroup($path);
+
+        if (!is_readable($path)) {
+            $this->io->error(sprintf('[FAIL] %s is not readable', $displayName));
+            $this->printPermissionSuggestion($path, $isSecretFile);
+            $this->errorCount++;
+            return;
+        }
+
+        $perms = fileperms($path);
+        if ($perms === false) {
+            $this->io->error(sprintf('[FAIL] %s - cannot read permissions', $displayName));
+            $this->errorCount++;
+            return;
+        }
+
+        $permsOctal = substr(sprintf('%o', $perms), -3);
+
+        // Check expected permissions if specified
+        if ($expectedPermissions !== null && $permsOctal !== $expectedPermissions) {
+            $this->io->error(sprintf(
+                '[FAIL] %s has permissions %s, expected %s [owner: %s:%s]',
+                $displayName,
+                $permsOctal,
+                $expectedPermissions,
+                $owner,
+                $group
+            ));
+            $this->printPermissionSuggestion($path, $isSecretFile, $expectedPermissions);
+            $this->errorCount++;
+            return;
+        }
+
+        // Check expected owner if specified
+        if ($expectedOwner !== null && $owner !== $expectedOwner) {
+            $this->io->error(sprintf(
+                '[FAIL] %s has owner %s, expected %s',
+                $displayName,
+                $owner,
+                $expectedOwner
+            ));
+            $this->errorCount++;
+            return;
+        }
+
+        // Check expected group if specified
+        if ($expectedGroup !== null && $group !== $expectedGroup) {
+            $this->io->error(sprintf(
+                '[FAIL] %s has group %s, expected %s',
+                $displayName,
+                $group,
+                $expectedGroup
+            ));
+            $this->errorCount++;
+            return;
+        }
+
+        // Check for 777 (world-writable) - always risky
+        if ($permsOctal === '777') {
+            $this->io->warning(sprintf(
+                '[WARN] %s has risky permissions %s (world-writable) [owner: %s:%s]',
+                $displayName,
+                $permsOctal,
+                $owner,
+                $group
+            ));
+            $this->printPermissionSuggestion($path, $isSecretFile);
+            return;
+        }
+
+        // For secret files, warn if world-readable (last digit >= 4)
+        if ($isSecretFile) {
+            $worldPerms = (int) $permsOctal[2];
+            if ($worldPerms >= 4) {
+                $this->io->warning(sprintf(
+                    '[WARN] %s has permissions %s (world-readable, contains secrets) [owner: %s:%s]',
+                    $displayName,
+                    $permsOctal,
+                    $owner,
+                    $group
+                ));
+                $this->printPermissionSuggestion($path, $isSecretFile);
+                return;
+            }
+        }
+
+        $this->io->writeln(sprintf(
+            '<info>[OK]</info> %s permissions: %s [owner: %s:%s]',
+            $displayName,
+            $permsOctal,
+            $owner,
+            $group
+        ));
+    }
+
+    /**
+     * Verifies directory and optionally its subdirectories permissions.
+     *
+     * @param string $path Full path to directory
+     * @param string|null $displayName Display name for output
+     * @param string[] $subdirectories Subdirectory names to also verify
+     * @param bool $isSecretDir If true, warns about world-readable permissions
+     */
+    protected function verifyDirectoryPermissions(
+        string $path,
+        ?string $displayName = null,
+        array $subdirectories = [],
+        bool $isSecretDir = false,
+    ): void {
+        $displayName ??= basename($path) . '/';
+
+        if (!is_dir($path)) {
+            $this->io->writeln(sprintf('<comment>[SKIP]</comment> %s does not exist', $displayName));
+            return;
+        }
+
+        $this->verifyFilePermission($path, $displayName, $isSecretDir);
+
+        foreach ($subdirectories as $subdir) {
+            $subdirPath = $path . '/' . $subdir;
+            if (is_dir($subdirPath)) {
+                $this->verifyFilePermission(
+                    $subdirPath,
+                    $displayName . $subdir . '/',
+                    $isSecretDir
+                );
+            }
+        }
+    }
+
+    /**
+     * Verifies permissions of files matching a glob pattern.
+     *
+     * @param string $pattern Glob pattern (e.g., '/path/to/.env*')
+     * @param bool $isSecretFile If true, warns about world-readable permissions
+     */
+    protected function verifyFilesPermissionsByPattern(string $pattern, bool $isSecretFile = false): void
+    {
+        $files = glob($pattern) ?: [];
+        foreach ($files as $file) {
+            if (is_file($file)) {
+                $this->verifyFilePermission($file, basename($file), $isSecretFile);
+            }
+        }
+    }
+
+    private function printPermissionSuggestion(
+        string $path,
+        bool $isSecretFile,
+        ?string $suggestedPermissions = null,
+    ): void {
+        $webUser = $this->getCurrentProcessUser();
+
+        if ($isSecretFile) {
+            $perms = $suggestedPermissions ?? '640';
+            $this->io->writeln(sprintf(
+                '         <comment>Fix: sudo chown %s:%s %s && sudo chmod %s %s</comment>',
+                $webUser,
+                $webUser,
+                $path,
+                $perms,
+                $path
+            ));
+        } else {
+            $perms = $suggestedPermissions ?? '755';
+            $this->io->writeln(sprintf(
+                '         <comment>Fix: sudo chown -R %s:%s %s && sudo chmod -R %s %s</comment>',
+                $webUser,
+                $webUser,
+                $path,
+                $perms,
+                $path
+            ));
+        }
+    }
+
+    /**
+     * Gets the file owner name or numeric ID if name cannot be resolved.
+     */
+    protected function getFileOwner(string $path): string
+    {
+        $ownerId = fileowner($path);
+        if ($ownerId === false) {
+            return '?';
+        }
+
+        if (function_exists('posix_getpwuid')) {
+            $ownerInfo = posix_getpwuid($ownerId);
+            if ($ownerInfo !== false) {
+                return $ownerInfo['name'];
+            }
+        }
+
+        // Fallback: use shell command
+        $output = [];
+        exec(sprintf('stat -c "%%U" %s 2>/dev/null', escapeshellarg($path)), $output);
+        $statResult = $output[0] ?? null;
+
+        // If stat returns UNKNOWN, use numeric ID
+        if ($statResult !== null && $statResult !== 'UNKNOWN') {
+            return $statResult;
+        }
+
+        return (string) $ownerId;
+    }
+
+    /**
+     * Gets the file group name or numeric ID if name cannot be resolved.
+     */
+    protected function getFileGroup(string $path): string
+    {
+        $groupId = filegroup($path);
+        if ($groupId === false) {
+            return '?';
+        }
+
+        if (function_exists('posix_getgrgid')) {
+            $groupInfo = posix_getgrgid($groupId);
+            if ($groupInfo !== false) {
+                return $groupInfo['name'];
+            }
+        }
+
+        // Fallback: use shell command
+        $output = [];
+        exec(sprintf('stat -c "%%G" %s 2>/dev/null', escapeshellarg($path)), $output);
+        $statResult = $output[0] ?? null;
+
+        // If stat returns UNKNOWN, use numeric ID
+        if ($statResult !== null && $statResult !== 'UNKNOWN') {
+            return $statResult;
+        }
+
+        return (string) $groupId;
+    }
+
+    /**
+     * Gets the current process user name.
+     */
+    protected function getCurrentProcessUser(): string
+    {
+        if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+            $processUser = posix_getpwuid(posix_geteuid());
+            if ($processUser !== false) {
+                return $processUser['name'];
+            }
+        }
+
+        // Fallback: use whoami
+        $output = [];
+        exec('whoami 2>/dev/null', $output);
+
+        return $output[0] ?? 'www-data';
     }
 
     /**
