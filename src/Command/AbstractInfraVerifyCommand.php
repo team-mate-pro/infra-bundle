@@ -100,6 +100,8 @@ abstract class AbstractInfraVerifyCommand extends Command
      */
     protected function getCurrentGitBranch(?string $projectDir = null): ?string
     {
+        $this->ensureGitSafeDirectory($projectDir);
+
         $command = ['git', 'rev-parse', '--abbrev-ref', 'HEAD'];
 
         $process = new Process($command, $projectDir);
@@ -128,6 +130,33 @@ abstract class AbstractInfraVerifyCommand extends Command
     }
 
     /**
+     * Ensures the directory is added to git safe.directory config.
+     *
+     * This is needed when running git commands in directories owned by different users
+     * (common in Docker containers where files are mounted from host).
+     *
+     * @param string|null $projectDir Project directory to add as safe
+     */
+    protected function ensureGitSafeDirectory(?string $projectDir = null): void
+    {
+        $directory = $projectDir ?? getcwd();
+        if ($directory === false) {
+            return;
+        }
+
+        // Resolve to absolute path
+        $realPath = realpath($directory);
+        if ($realPath === false) {
+            return;
+        }
+
+        $process = new Process([
+            'git', 'config', '--global', '--add', 'safe.directory', $realPath,
+        ]);
+        $process->run();
+    }
+
+    /**
      * Gets the latest git commit hash (short version).
      *
      * @param string|null $projectDir Project directory (defaults to current working directory)
@@ -135,6 +164,8 @@ abstract class AbstractInfraVerifyCommand extends Command
      */
     protected function getCurrentGitCommit(?string $projectDir = null): ?string
     {
+        $this->ensureGitSafeDirectory($projectDir);
+
         $process = new Process(['git', 'rev-parse', '--short', 'HEAD'], $projectDir);
         $process->run();
 
@@ -155,6 +186,8 @@ abstract class AbstractInfraVerifyCommand extends Command
      */
     protected function verifyGitStatus(?string $projectDir = null, bool $allowUncommitted = false): void
     {
+        $this->ensureGitSafeDirectory($projectDir);
+
         $process = new Process(['git', 'status', '--porcelain'], $projectDir);
         $process->run();
 
