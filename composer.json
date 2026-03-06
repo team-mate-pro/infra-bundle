@@ -3,7 +3,7 @@
     "description": "Infrastructure verification bundle for Symfony applications",
     "type": "symfony-bundle",
     "license": "MIT",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "require": {
         "php": ">=8.2",
         "symfony/console": "^6.4|^7.0",
@@ -13,7 +13,8 @@
         "symfony/process": "^6.4|^7.0"
     },
     "suggest": {
-        "ext-pdo": "Required for database connection verification"
+        "ext-pdo": "Required for database connection verification",
+        "ext-posix": "Required for file owner/group name resolution"
     },
     "autoload": {
         "psr-4": {
