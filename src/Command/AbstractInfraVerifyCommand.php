@@ -374,7 +374,13 @@ abstract class AbstractInfraVerifyCommand extends Command
         }
     }
 
-    protected function verifyMailerConnection(string $recipientEmail): void
+    /**
+     * Verifies SMTP mailer connection by sending a test email.
+     *
+     * @param string $recipientEmail Email address to send test email to
+     * @param string|null $from Optional sender email address (--from option for mailer:test)
+     */
+    protected function verifyMailerConnection(string $recipientEmail, ?string $from = null): void
     {
         $label = 'SMTP connection (mailer:test)';
 
@@ -386,10 +392,16 @@ abstract class AbstractInfraVerifyCommand extends Command
         $application = new Application($this->kernel);
         $application->setAutoExit(false);
 
-        $input = new ArrayInput([
+        $inputArgs = [
             'command' => 'mailer:test',
             'to' => $recipientEmail,
-        ]);
+        ];
+
+        if ($from !== null) {
+            $inputArgs['--from'] = $from;
+        }
+
+        $input = new ArrayInput($inputArgs);
 
         $output = new BufferedOutput();
         $exitCode = $application->run($input, $output);
