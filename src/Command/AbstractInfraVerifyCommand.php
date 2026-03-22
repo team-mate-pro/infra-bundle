@@ -804,7 +804,46 @@ abstract class AbstractInfraVerifyCommand extends Command
     }
 
     /**
-     * Verifies JWT configuration for Lexik JWT Authentication Bundle.
+     * Verifies that a port is listening locally (incoming).
+     *
+     * @param int $port Port number to check
+     * @param string $host Host to check (default: 127.0.0.1)
+     * @param string|null $description Optional label for output
+     */
+    protected function verifyPortIn(int $port, string $host = '127.0.0.1', ?string $description = null): void
+    {
+        $label = $description ?? sprintf('Port %d incoming (%s:%d)', $port, $host, $port);
+        $this->checkPort($host, $port, $label);
+    }
+
+    /**
+     * Verifies that this server can reach an external host:port (outgoing).
+     *
+     * @param int $port Port number to check
+     * @param string $host External host to reach (default: google.com)
+     * @param string|null $description Optional label for output
+     */
+    protected function verifyPortOut(int $port, string $host = 'google.com', ?string $description = null): void
+    {
+        $label = $description ?? sprintf('Port %d outgoing (%s:%d)', $port, $host, $port);
+        $this->checkPort($host, $port, $label);
+    }
+
+    private function checkPort(string $host, int $port, string $label): void
+    {
+        $socket = @fsockopen($host, $port, $errno, $errstr, 2);
+
+        if ($socket !== false) {
+            fclose($socket);
+            $this->io->writeln(sprintf('<info>[OK]</info> %s — open', $label));
+            return;
+        }
+
+        $this->io->error(sprintf('[FAIL] %s — closed (%s)', $label, $errstr ?: 'connection refused/timed out'));
+        $this->errorCount++;
+    }
+
+    /**
      *
      * Checks:
      * - JWT_SECRET_KEY, JWT_PUBLIC_KEY, JWT_PASSPHRASE environment variables
