@@ -249,6 +249,52 @@ abstract class AbstractInfraVerifyCommand extends Command
     }
 
     /**
+     * Verifies a PHP ini setting has the expected value.
+     *
+     * Normalizes boolean-like values (On/Off/1/0/true/false) for comparison.
+     *
+     * @param string $name The ini setting name (e.g., 'zend.exception_ignore_args')
+     * @param string $expectedValue The expected value (e.g., 'Off', '128M')
+     * @param string|null $description Optional human-readable description
+     */
+    protected function verifyPhpIniSetting(string $name, string $expectedValue, ?string $description = null): void
+    {
+        $label = $description !== null ? sprintf('%s (%s)', $name, $description) : $name;
+        $value = ini_get($name);
+
+        if ($value === false) {
+            $this->io->writeln(sprintf('<comment>[SKIP]</comment> %s - setting not available', $label));
+            return;
+        }
+
+        if (!$this->phpIniValuesMatch($value, $expectedValue)) {
+            $this->io->error(sprintf('[FAIL] %s = "%s" (expected: "%s")', $label, $value, $expectedValue));
+            $this->errorCount++;
+            return;
+        }
+
+        $this->io->writeln(sprintf('<info>[OK]</info> %s = %s', $label, $value));
+    }
+
+    private function phpIniValuesMatch(string $actual, string $expected): bool
+    {
+        $normalizedActual = strtolower($actual);
+        $normalizedExpected = strtolower($expected);
+
+        $offValues = ['off', '0', 'false', ''];
+        $onValues = ['on', '1', 'true'];
+
+        $actualIsOn = in_array($normalizedActual, $onValues, true);
+        $actualIsOff = in_array($normalizedActual, $offValues, true);
+        $expectedIsOn = in_array($normalizedExpected, $onValues, true);
+        $expectedIsOff = in_array($normalizedExpected, $offValues, true);
+
+        return ($actualIsOn && $expectedIsOn)
+            || ($actualIsOff && $expectedIsOff)
+            || ($normalizedActual === $normalizedExpected);
+    }
+
+    /**
      * @param list<string> $command
      */
     protected function verifyBinary(array $command, ?string $description = null): void

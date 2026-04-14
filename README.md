@@ -1,6 +1,6 @@
 # TeamMatePro InfraBundle
 
-**Version:** 1.0.0
+**Version:** 1.4.0
 **Type:** symfony-bundle
 
 Infrastructure verification bundle for Symfony applications. Provides a base command for verifying server configuration before deployment.
@@ -74,6 +74,23 @@ Checks if a PHP extension is loaded.
 ```php
 $this->verifyPhpExtension(name: 'pdo_mysql');
 $this->verifyPhpExtension(name: 'gd', description: 'image processing');
+```
+
+---
+
+### `verifyPhpIniSetting(string $name, string $expectedValue, ?string $description = null)`
+
+Checks if a PHP ini setting has the expected value. Normalizes boolean-like values (`On`/`Off`/`1`/`0`/`true`/`false`).
+
+```php
+// Sentry - stack trace arguments
+$this->verifyPhpIniSetting('zend.exception_ignore_args', 'Off', 'Sentry stack trace arguments');
+
+// Memory limit
+$this->verifyPhpIniSetting('memory_limit', '256M');
+
+// Display errors off in production
+$this->verifyPhpIniSetting('display_errors', 'Off', 'must be disabled in production');
 ```
 
 ---
